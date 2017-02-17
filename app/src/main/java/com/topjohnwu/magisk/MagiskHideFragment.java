@@ -1,6 +1,5 @@
 package com.topjohnwu.magisk;
 
-import android.app.Fragment;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.support.annotation.Nullable;
@@ -16,46 +15,42 @@ import android.view.ViewGroup;
 import android.widget.SearchView;
 
 import com.topjohnwu.magisk.adapters.ApplicationAdapter;
-import com.topjohnwu.magisk.utils.Async;
-import com.topjohnwu.magisk.utils.CallbackHandler;
+import com.topjohnwu.magisk.asyncs.MagiskHide;
+import com.topjohnwu.magisk.components.Fragment;
+import com.topjohnwu.magisk.utils.CallbackEvent;
 import com.topjohnwu.magisk.utils.Logger;
-
-import java.util.Arrays;
-import java.util.List;
 
 import butterknife.BindView;
 import butterknife.ButterKnife;
+import butterknife.Unbinder;
 
-public class MagiskHideFragment extends Fragment implements CallbackHandler.EventListener {
+public class MagiskHideFragment extends Fragment implements CallbackEvent.Listener<Void> {
 
+    private Unbinder unbinder;
     @BindView(R.id.swipeRefreshLayout) SwipeRefreshLayout mSwipeRefreshLayout;
     @BindView(R.id.recyclerView) RecyclerView recyclerView;
-
-    // Don't show in list...
-    public static final List<String> BLACKLIST =  Arrays.asList(
-            "android",
-            "com.topjohnwu.magisk",
-            "com.google.android.gms",
-            "com.google.android.apps.walletnfcrel",
-            "com.nianticlabs.pokemongo"
-    );
-    public static CallbackHandler.Event packageLoadDone = new CallbackHandler.Event();
 
     private ApplicationAdapter appAdapter;
 
     private SearchView.OnQueryTextListener searchListener;
     private String lastFilter;
 
+    @Override
+    public void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setHasOptionsMenu(true);
+    }
+
     @Nullable
     @Override
     public View onCreateView(LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
-        View view = inflater.inflate(R.layout.magisk_hide_fragment, container, false);
-        ButterKnife.bind(this, view);
+        View view = inflater.inflate(R.layout.fragment_magisk_hide, container, false);
+        unbinder = ButterKnife.bind(this, view);
 
         PackageManager packageManager = getActivity().getPackageManager();
 
         mSwipeRefreshLayout.setRefreshing(true);
-        mSwipeRefreshLayout.setOnRefreshListener(() -> new Async.LoadApps(packageManager).exec());
+        mSwipeRefreshLayout.setOnRefreshListener(() -> new MagiskHide(getActivity()).list());
 
         appAdapter = new ApplicationAdapter(packageManager);
         recyclerView.setAdapter(appAdapter);
@@ -76,6 +71,9 @@ public class MagiskHideFragment extends Fragment implements CallbackHandler.Even
             }
         };
 
+        if (getApplication().magiskHideDone.isTriggered)
+            onTrigger(getApplication().magiskHideDone);
+
         return view;
     }
 
@@ -87,27 +85,28 @@ public class MagiskHideFragment extends Fragment implements CallbackHandler.Even
     }
 
     @Override
-    public void onResume() {
-        super.onResume();
-        setHasOptionsMenu(true);
+    public void onStart() {
+        super.onStart();
         getActivity().setTitle(R.string.magiskhide);
-        CallbackHandler.register(packageLoadDone, this);
-        if (packageLoadDone.isTriggered) {
-            onTrigger(packageLoadDone);
-        }
+        getApplication().magiskHideDone.register(this);
     }
 
     @Override
-    public void onPause() {
-        super.onPause();
-        CallbackHandler.unRegister(packageLoadDone, this);
+    public void onStop() {
+        getApplication().magiskHideDone.unRegister(this);
+        super.onStop();
     }
 
     @Override
-    public void onTrigger(CallbackHandler.Event event) {
+    public void onDestroyView() {
+        super.onDestroyView();
+        unbinder.unbind();
+    }
+
+    @Override
+    public void onTrigger(CallbackEvent<Void> event) {
         Logger.dev("MagiskHideFragment: UI refresh");
-        Async.LoadApps.Result result = (Async.LoadApps.Result) event.getResult();
-        appAdapter.setLists(result.listApps, result.hideList);
+        appAdapter.setLists(getApplication().appList, getApplication().magiskHideList);
         mSwipeRefreshLayout.setRefreshing(false);
         if (!TextUtils.isEmpty(lastFilter)) {
             appAdapter.filter(lastFilter);

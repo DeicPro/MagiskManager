@@ -1,7 +1,6 @@
 package com.topjohnwu.magisk;
 
 import android.app.Activity;
-import android.app.Fragment;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -15,27 +14,28 @@ import android.widget.TextView;
 
 import com.github.clans.fab.FloatingActionButton;
 import com.topjohnwu.magisk.adapters.ModulesAdapter;
+import com.topjohnwu.magisk.asyncs.FlashZip;
+import com.topjohnwu.magisk.asyncs.LoadModules;
+import com.topjohnwu.magisk.components.Fragment;
 import com.topjohnwu.magisk.module.Module;
-import com.topjohnwu.magisk.utils.Async;
-import com.topjohnwu.magisk.utils.CallbackHandler;
+import com.topjohnwu.magisk.utils.CallbackEvent;
 import com.topjohnwu.magisk.utils.Logger;
-import com.topjohnwu.magisk.utils.ModuleHelper;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import butterknife.BindView;
 import butterknife.ButterKnife;
+import butterknife.Unbinder;
 
-public class ModulesFragment extends Fragment implements CallbackHandler.EventListener {
-
-    public static final CallbackHandler.Event moduleLoadDone = new CallbackHandler.Event();
+public class ModulesFragment extends Fragment implements CallbackEvent.Listener<Void> {
 
     private static final int FETCH_ZIP_CODE = 2;
 
+    private Unbinder unbinder;
     @BindView(R.id.swipeRefreshLayout) SwipeRefreshLayout mSwipeRefreshLayout;
     @BindView(R.id.recyclerView) RecyclerView recyclerView;
-    @BindView(R.id.empty_rv) TextView emptyTv;
+    @BindView(R.id.empty_rv) TextView emptyRv;
     @BindView(R.id.fab) FloatingActionButton fabio;
 
     private List<Module> listModules = new ArrayList<>();
@@ -43,8 +43,8 @@ public class ModulesFragment extends Fragment implements CallbackHandler.EventLi
     @Nullable
     @Override
     public View onCreateView(LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
-        View view = inflater.inflate(R.layout.modules_fragment, container, false);
-        ButterKnife.bind(this, view);
+        View view = inflater.inflate(R.layout.fragment_modules, container, false);
+        unbinder = ButterKnife.bind(this, view);
 
         fabio.setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
@@ -54,7 +54,7 @@ public class ModulesFragment extends Fragment implements CallbackHandler.EventLi
 
         mSwipeRefreshLayout.setOnRefreshListener(() -> {
             recyclerView.setVisibility(View.GONE);
-            new Async.LoadModules().exec();
+            new LoadModules(getActivity()).exec();
         });
 
         recyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
@@ -69,7 +69,7 @@ public class ModulesFragment extends Fragment implements CallbackHandler.EventLi
             }
         });
 
-        if (moduleLoadDone.isTriggered) {
+        if (getApplication().moduleLoadDone.isTriggered) {
             updateUI();
         }
 
@@ -77,7 +77,7 @@ public class ModulesFragment extends Fragment implements CallbackHandler.EventLi
     }
 
     @Override
-    public void onTrigger(CallbackHandler.Event event) {
+    public void onTrigger(CallbackEvent<Void> event) {
         Logger.dev("ModulesFragment: UI refresh triggered");
         updateUI();
     }
@@ -87,31 +87,38 @@ public class ModulesFragment extends Fragment implements CallbackHandler.EventLi
         if (requestCode == FETCH_ZIP_CODE && resultCode == Activity.RESULT_OK && data != null) {
             // Get the URI of the selected file
             final Uri uri = data.getData();
-            new Async.FlashZIP(getActivity(), uri).exec();
+            new FlashZip(getActivity(), uri).exec();
         }
 
     }
 
     @Override
-    public void onResume() {
-        super.onResume();
-        CallbackHandler.register(moduleLoadDone, this);
+    public void onStart() {
+        super.onStart();
+        getApplication().moduleLoadDone.register(this);
         getActivity().setTitle(R.string.modules);
     }
 
     @Override
-    public void onDestroy() {
-        super.onDestroy();
-        CallbackHandler.unRegister(moduleLoadDone, this);
+    public void onStop() {
+        getApplication().moduleLoadDone.unRegister(this);
+        super.onStop();
+    }
+
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        unbinder.unbind();
     }
 
     private void updateUI() {
-        ModuleHelper.getModuleList(listModules);
+        listModules.clear();
+        listModules.addAll(getApplication().moduleMap.values());
         if (listModules.size() == 0) {
-            emptyTv.setVisibility(View.VISIBLE);
+            emptyRv.setVisibility(View.VISIBLE);
             recyclerView.setVisibility(View.GONE);
         } else {
-            emptyTv.setVisibility(View.GONE);
+            emptyRv.setVisibility(View.GONE);
             recyclerView.setVisibility(View.VISIBLE);
             recyclerView.setAdapter(new ModulesAdapter(listModules));
         }

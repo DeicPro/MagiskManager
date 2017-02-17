@@ -1,6 +1,5 @@
 package com.topjohnwu.magisk;
 
-import android.app.Fragment;
 import android.os.Bundle;
 import android.support.annotation.Nullable;
 import android.support.v4.view.MenuItemCompat;
@@ -16,24 +15,26 @@ import android.widget.TextView;
 
 import com.topjohnwu.magisk.adapters.ReposAdapter;
 import com.topjohnwu.magisk.adapters.SimpleSectionedRecyclerViewAdapter;
+import com.topjohnwu.magisk.asyncs.LoadRepos;
+import com.topjohnwu.magisk.asyncs.ParallelTask;
+import com.topjohnwu.magisk.components.Fragment;
+import com.topjohnwu.magisk.module.Module;
 import com.topjohnwu.magisk.module.Repo;
-import com.topjohnwu.magisk.utils.Async;
-import com.topjohnwu.magisk.utils.CallbackHandler;
+import com.topjohnwu.magisk.utils.CallbackEvent;
 import com.topjohnwu.magisk.utils.Logger;
-import com.topjohnwu.magisk.utils.ModuleHelper;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import butterknife.BindView;
 import butterknife.ButterKnife;
+import butterknife.Unbinder;
 
-public class ReposFragment extends Fragment implements CallbackHandler.EventListener {
+public class ReposFragment extends Fragment implements CallbackEvent.Listener<Void> {
 
-    public static final CallbackHandler.Event repoLoadDone = new CallbackHandler.Event();
-
+    private Unbinder unbinder;
     @BindView(R.id.recyclerView) RecyclerView recyclerView;
-    @BindView(R.id.empty_rv) TextView emptyTv;
+    @BindView(R.id.empty_rv) TextView emptyRv;
     @BindView(R.id.swipeRefreshLayout) SwipeRefreshLayout mSwipeRefreshLayout;
 
     private List<Repo> mUpdateRepos = new ArrayList<>();
@@ -47,16 +48,19 @@ public class ReposFragment extends Fragment implements CallbackHandler.EventList
 
     private SearchView.OnQueryTextListener searchListener;
 
-    @Nullable
+    @Override
+    public void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setHasOptionsMenu(true);
+    }
 
+    @Nullable
     @Override
     public View onCreateView(LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
-        View view = inflater.inflate(R.layout.repos_fragment, container, false);
+        View view = inflater.inflate(R.layout.fragment_repos, container, false);
+        unbinder = ButterKnife.bind(this, view);
 
-        ButterKnife.bind(this, view);
-
-        mSectionedAdapter = new
-                SimpleSectionedRecyclerViewAdapter(getActivity(), R.layout.section,
+        mSectionedAdapter = new SimpleSectionedRecyclerViewAdapter(R.layout.section,
                 R.id.section_text, new ReposAdapter(fUpdateRepos, fInstalledRepos, fOthersRepos));
 
         recyclerView.setAdapter(mSectionedAdapter);
@@ -65,10 +69,10 @@ public class ReposFragment extends Fragment implements CallbackHandler.EventList
 
         mSwipeRefreshLayout.setOnRefreshListener(() -> {
             recyclerView.setVisibility(View.GONE);
-            new Async.LoadRepos(getActivity()).exec();
+            new LoadRepos(getActivity()).exec();
         });
 
-        if (repoLoadDone.isTriggered) {
+        if (getApplication().repoLoadDone.isTriggered) {
             reloadRepos();
             updateUI();
         }
@@ -90,7 +94,7 @@ public class ReposFragment extends Fragment implements CallbackHandler.EventList
     }
 
     @Override
-    public void onTrigger(CallbackHandler.Event event) {
+    public void onTrigger(CallbackEvent<Void> event) {
         Logger.dev("ReposFragment: UI refresh triggered");
         reloadRepos();
         updateUI();
@@ -104,21 +108,39 @@ public class ReposFragment extends Fragment implements CallbackHandler.EventList
     }
 
     @Override
-    public void onResume() {
-        super.onResume();
-        setHasOptionsMenu(true);
-        CallbackHandler.register(repoLoadDone, this);
+    public void onStart() {
+        super.onStart();
+        getApplication().repoLoadDone.register(this);
         getActivity().setTitle(R.string.downloads);
     }
 
     @Override
-    public void onDestroy() {
-        super.onDestroy();
-        CallbackHandler.unRegister(repoLoadDone, this);
+    public void onStop() {
+        getApplication().repoLoadDone.unRegister(this);
+        super.onStop();
+    }
+
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        unbinder.unbind();
     }
 
     private void reloadRepos() {
-        ModuleHelper.getRepoLists(mUpdateRepos, mInstalledRepos, mOthersRepos);
+        mUpdateRepos.clear();
+        mInstalledRepos.clear();
+        mOthersRepos.clear();
+        for (Repo repo : getApplication().repoMap.values()) {
+            Module module = getApplication().moduleMap.get(repo.getId());
+            if (module != null) {
+                if (repo.getVersionCode() > module.getVersionCode())
+                    mUpdateRepos.add(repo);
+                else
+                    mInstalledRepos.add(repo);
+            } else {
+                mOthersRepos.add(repo);
+            }
+        }
         fUpdateRepos.clear();
         fInstalledRepos.clear();
         fOthersRepos.clear();
@@ -129,7 +151,7 @@ public class ReposFragment extends Fragment implements CallbackHandler.EventList
 
     private void updateUI() {
         if (fUpdateRepos.size() + fInstalledRepos.size() + fOthersRepos.size() == 0) {
-            emptyTv.setVisibility(View.VISIBLE);
+            emptyRv.setVisibility(View.VISIBLE);
             recyclerView.setVisibility(View.GONE);
         } else {
             List<SimpleSectionedRecyclerViewAdapter.Section> sections = new ArrayList<>();
@@ -144,13 +166,13 @@ public class ReposFragment extends Fragment implements CallbackHandler.EventList
             }
             SimpleSectionedRecyclerViewAdapter.Section[] array = sections.toArray(new SimpleSectionedRecyclerViewAdapter.Section[sections.size()]);
             mSectionedAdapter.setSections(array);
-            emptyTv.setVisibility(View.GONE);
+            emptyRv.setVisibility(View.GONE);
             recyclerView.setVisibility(View.VISIBLE);
         }
         mSwipeRefreshLayout.setRefreshing(false);
     }
 
-    private class FilterApps extends Async.NormalTask<String, Void, Void> {
+    private class FilterApps extends ParallelTask<String, Void, Void> {
         @Override
         protected Void doInBackground(String... strings) {
             String newText = strings[0];

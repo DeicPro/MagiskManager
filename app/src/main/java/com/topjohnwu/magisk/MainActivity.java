@@ -1,59 +1,53 @@
 package com.topjohnwu.magisk;
 
 import android.Manifest;
-import android.app.Fragment;
-import android.app.FragmentTransaction;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
-import android.preference.PreferenceManager;
-import android.support.annotation.IdRes;
 import android.support.annotation.NonNull;
 import android.support.design.widget.NavigationView;
 import android.support.v4.app.ActivityCompat;
-import android.support.v4.view.GravityCompat;
+import android.support.v4.app.Fragment;
+import android.support.v4.app.FragmentTransaction;
 import android.support.v4.widget.DrawerLayout;
 import android.support.v7.app.ActionBarDrawerToggle;
-import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 
-import com.topjohnwu.magisk.utils.CallbackHandler;
+import com.topjohnwu.magisk.components.Activity;
+import com.topjohnwu.magisk.utils.CallbackEvent;
 import com.topjohnwu.magisk.utils.Shell;
-import com.topjohnwu.magisk.utils.Utils;
 
 import butterknife.BindView;
 import butterknife.ButterKnife;
 
-public class MainActivity extends AppCompatActivity
-        implements NavigationView.OnNavigationItemSelectedListener, CallbackHandler.EventListener {
+public class MainActivity extends Activity
+        implements NavigationView.OnNavigationItemSelectedListener, CallbackEvent.Listener<Void> {
 
-    private static final String SELECTED_ITEM_ID = "SELECTED_ITEM_ID";
-
-    public static CallbackHandler.Event recreate = new CallbackHandler.Event();
+    public static final String SECTION = "section";
 
     private final Handler mDrawerHandler = new Handler();
     private SharedPreferences prefs;
+    private int mDrawerItem;
 
     @BindView(R.id.toolbar) Toolbar toolbar;
     @BindView(R.id.drawer_layout) DrawerLayout drawer;
     @BindView(R.id.nav_view) public NavigationView navigationView;
 
-    @IdRes
-    private int mSelectedId = R.id.status;
+    private float toolbarElevation;
 
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
 
-        prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
+        prefs = getApplicationContext().prefs;
 
-        if (Utils.isDarkTheme) {
-            setTheme(R.style.AppTheme_dh);
+        if (getApplicationContext().isDarkTheme) {
+            setTheme(R.style.AppTheme_Dark);
         }
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
@@ -79,133 +73,153 @@ public class MainActivity extends AppCompatActivity
             }
         };
 
+        toolbarElevation = toolbar.getElevation();
+
         drawer.addDrawerListener(toggle);
         toggle.syncState();
 
-        //noinspection ResourceType
-        mSelectedId = savedInstanceState == null ? mSelectedId : savedInstanceState.getInt(SELECTED_ITEM_ID);
-        navigationView.setCheckedItem(mSelectedId);
-
-        if (savedInstanceState == null) {
-            mDrawerHandler.removeCallbacksAndMessages(null);
-            mDrawerHandler.postDelayed(() -> navigate(mSelectedId), 250);
-        }
+        if (savedInstanceState == null)
+            navigate(getIntent().getStringExtra(SECTION));
 
         navigationView.setNavigationItemSelectedListener(this);
+        getApplicationContext().reloadMainActivity.register(this);
+
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        CallbackHandler.register(StatusFragment.updateCheckDone, this);
-        CallbackHandler.register(recreate, this);
-        if (StatusFragment.updateCheckDone.isTriggered) {
-            onTrigger(StatusFragment.updateCheckDone);
-        }
         checkHideSection();
     }
 
     @Override
-    protected void onPause() {
-        super.onPause();
-        CallbackHandler.unRegister(StatusFragment.updateCheckDone, this);
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        CallbackHandler.unRegister(recreate, this);
+    protected void onRestoreInstanceState(Bundle savedInstanceState) {
+        super.onRestoreInstanceState(savedInstanceState);
+        navigate(savedInstanceState.getInt(SECTION, R.id.status));
     }
 
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
-        outState.putInt(SELECTED_ITEM_ID, mSelectedId);
+        outState.putInt(SECTION, mDrawerItem);
+    }
+
+    @Override
+    protected void onDestroy() {
+        getApplicationContext().reloadMainActivity.unRegister(this);
+        super.onDestroy();
     }
 
     @Override
     public void onBackPressed() {
-        if (drawer.isDrawerOpen(GravityCompat.START)) {
-            drawer.closeDrawer(GravityCompat.START);
-        } else {
+        if (drawer.isDrawerOpen(navigationView))
+            drawer.closeDrawer(navigationView);
+        else
             finish();
-        }
     }
 
     @Override
     public boolean onNavigationItemSelected(@NonNull final MenuItem menuItem) {
-        mSelectedId = menuItem.getItemId();
         mDrawerHandler.removeCallbacksAndMessages(null);
         mDrawerHandler.postDelayed(() -> navigate(menuItem.getItemId()), 250);
-        drawer.closeDrawer(GravityCompat.START);
+        drawer.closeDrawer(navigationView);
         return true;
     }
 
     @Override
-    public void onTrigger(CallbackHandler.Event event) {
-        if (event == StatusFragment.updateCheckDone) {
-            Menu menu = navigationView.getMenu();
-            menu.findItem(R.id.install).setVisible(StatusFragment.remoteMagiskVersion > 0 &&
-                    Shell.rootAccess());
-        } else if (event == recreate) {
-            recreate();
-        }
+    public void onTrigger(CallbackEvent<Void> event) {
+        recreate();
     }
 
     private void checkHideSection() {
         Menu menu = navigationView.getMenu();
-        menu.findItem(R.id.magiskhide).setVisible(StatusFragment.magiskVersion >= 8 &&
-                prefs.getBoolean("magiskhide", false) && Shell.rootAccess());
-        menu.findItem(R.id.modules).setVisible(StatusFragment.magiskVersion >= 4 &&
-                Shell.rootAccess());
-        menu.findItem(R.id.downloads).setVisible(StatusFragment.magiskVersion >= 4 &&
-                Shell.rootAccess());
-        menu.findItem(R.id.log).setVisible(Shell.rootAccess());
-        menu.findItem(R.id.install).setVisible(Shell.rootAccess());
+        if (Shell.rootAccess()) {
+            menu.findItem(R.id.magiskhide).setVisible(
+                    getApplicationContext().magiskVersion >= 8 && prefs.getBoolean("magiskhide", false));
+            menu.findItem(R.id.modules).setVisible(getApplicationContext().magiskVersion >= 4);
+            menu.findItem(R.id.downloads).setVisible(getApplicationContext().magiskVersion >= 4);
+            menu.findItem(R.id.log).setVisible(true);
+            menu.findItem(R.id.superuser).setVisible(getApplicationContext().isSuClient);
+        }
+        menu.findItem(R.id.install).setVisible(getApplicationContext().remoteMagiskVersion > 0);
     }
 
-    public void navigate(final int itemId) {
-        Fragment navFragment = null;
-        String tag = "";
+    public void navigate(String item) {
+        int itemId = R.id.status;
+        if (item != null) {
+            switch (item) {
+                case "status":
+                    itemId = R.id.status;
+                    break;
+                case "install":
+                    itemId = R.id.install;
+                    break;
+                case "superuser":
+                    itemId = R.id.superuser;
+                    break;
+                case "modules":
+                    itemId = R.id.modules;
+                    break;
+                case "downloads":
+                    itemId = R.id.downloads;
+                    break;
+                case "magiskhide":
+                    itemId = R.id.magiskhide;
+                    break;
+                case "log":
+                    itemId = R.id.log;
+                    break;
+                case "settings":
+                    itemId = R.id.settings;
+                    break;
+                case "about":
+                    itemId = R.id.app_about;
+                    break;
+            }
+        }
+        navigate(itemId);
+    }
+
+    public void navigate(int itemId) {
+        mDrawerItem = itemId;
+        navigationView.setCheckedItem(itemId);
         switch (itemId) {
             case R.id.status:
-                tag = "status";
-                navFragment = new StatusFragment();
+                displayFragment(new StatusFragment(), "status", true);
                 break;
             case R.id.install:
-                tag = "install";
-                navFragment = new InstallFragment();
+                displayFragment(new InstallFragment(), "install", true);
+                break;
+            case R.id.superuser:
+                displayFragment(new SuperuserFragment(), "superuser", true);
                 break;
             case R.id.modules:
-                tag = "modules";
-                navFragment = new ModulesFragment();
+                displayFragment(new ModulesFragment(), "modules", true);
                 break;
             case R.id.downloads:
-                tag = "downloads";
-                navFragment = new ReposFragment();
+                displayFragment(new ReposFragment(), "downloads", true);
                 break;
             case R.id.magiskhide:
-                tag = "magiskhide";
-                navFragment = new MagiskHideFragment();
+                displayFragment(new MagiskHideFragment(), "magiskhide", true);
                 break;
             case R.id.log:
-                tag = "log";
-                navFragment = new LogFragment();
+                displayFragment(new LogFragment(), "log", false);
                 break;
             case R.id.settings:
                 startActivity(new Intent(this, SettingsActivity.class));
                 break;
             case R.id.app_about:
                 startActivity(new Intent(this, AboutActivity.class));
-                return;
+                break;
         }
+    }
 
-        if (navFragment != null) {
-            FragmentTransaction transaction = getFragmentManager().beginTransaction();
-            transaction.setCustomAnimations(android.R.animator.fade_in, android.R.animator.fade_out);
-            try {
-                transaction.replace(R.id.content_frame, navFragment, tag).commit();
-            } catch (IllegalStateException ignored) {}
-        }
+    private void displayFragment(@NonNull Fragment navFragment, String tag, boolean setElevation) {
+        FragmentTransaction transaction = getSupportFragmentManager().beginTransaction();
+        supportInvalidateOptionsMenu();
+        transaction.setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out);
+        transaction.replace(R.id.content_frame, navFragment, tag).commitNow();
+        if (setElevation) toolbar.setElevation(toolbarElevation);
+        else toolbar.setElevation(0);
     }
 }

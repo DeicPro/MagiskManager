@@ -2,6 +2,7 @@ package com.topjohnwu.magisk.adapters;
 
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.support.design.widget.Snackbar;
 import android.support.v7.widget.RecyclerView;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -12,10 +13,12 @@ import android.widget.ImageView;
 import android.widget.TextView;
 
 import com.topjohnwu.magisk.R;
-import com.topjohnwu.magisk.utils.Async;
+import com.topjohnwu.magisk.asyncs.MagiskHide;
+import com.topjohnwu.magisk.components.SnackbarMaker;
 import com.topjohnwu.magisk.utils.Utils;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -23,6 +26,17 @@ import butterknife.BindView;
 import butterknife.ButterKnife;
 
 public class ApplicationAdapter extends RecyclerView.Adapter<ApplicationAdapter.ViewHolder> {
+
+    public static final List<String> BLACKLIST =  Arrays.asList(
+            "android",
+            "com.topjohnwu.magisk",
+            "com.google.android.gms"
+    );
+
+    private static final List<String> SNLIST =  Arrays.asList(
+            "com.google.android.apps.walletnfcrel",
+            "com.nianticlabs.pokemongo"
+    );
 
     private List<ApplicationInfo> mOriginalList, mList;
     private List<String> mHideList;
@@ -33,18 +47,18 @@ public class ApplicationAdapter extends RecyclerView.Adapter<ApplicationAdapter.
         mOriginalList = mList = Collections.emptyList();
         mHideList = Collections.emptyList();
         this.packageManager = packageManager;
+        filter = new ApplicationFilter();
     }
 
     public void setLists(List<ApplicationInfo> listApps, List<String> hideList) {
-        mOriginalList = mList = Collections.unmodifiableList(listApps);
-        mHideList = new ArrayList<>(hideList);
+        mOriginalList = mList = listApps;
+        mHideList = hideList;
         notifyDataSetChanged();
     }
 
     @Override
     public ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
         View mView = LayoutInflater.from(parent.getContext()).inflate(R.layout.list_item_app, parent, false);
-        ButterKnife.bind(this, mView);
         return new ViewHolder(mView);
     }
 
@@ -56,17 +70,30 @@ public class ApplicationAdapter extends RecyclerView.Adapter<ApplicationAdapter.
         holder.appName.setText(info.loadLabel(packageManager));
         holder.appPackage.setText(info.packageName);
 
+        // Remove all listeners
+        holder.itemView.setOnClickListener(null);
         holder.checkBox.setOnCheckedChangeListener(null);
-        holder.checkBox.setChecked(mHideList.contains(info.packageName));
-        holder.checkBox.setOnCheckedChangeListener((v, isChecked) -> {
-            if (isChecked) {
-                new Async.MagiskHide().add(info.packageName);
-                mHideList.add(info.packageName);
-            } else {
-                new Async.MagiskHide().rm(info.packageName);
-                mHideList.remove(info.packageName);
-            }
-        });
+
+        if (SNLIST.contains(info.packageName)) {
+            holder.checkBox.setChecked(true);
+            holder.checkBox.setEnabled(false);
+            holder.itemView.setOnClickListener(v ->
+                SnackbarMaker.make(holder.itemView,
+                        R.string.safetyNet_hide_notice, Snackbar.LENGTH_LONG).show()
+            );
+        } else {
+            holder.checkBox.setEnabled(true);
+            holder.checkBox.setChecked(mHideList.contains(info.packageName));
+            holder.checkBox.setOnCheckedChangeListener((v, isChecked) -> {
+                if (isChecked) {
+                    new MagiskHide().add(info.packageName);
+                    mHideList.add(info.packageName);
+                } else {
+                    new MagiskHide().rm(info.packageName);
+                    mHideList.remove(info.packageName);
+                }
+            });
+        }
     }
 
     @Override
@@ -75,9 +102,6 @@ public class ApplicationAdapter extends RecyclerView.Adapter<ApplicationAdapter.
     }
 
     public void filter(String constraint) {
-        if (filter == null) {
-            filter = new ApplicationFilter();
-        }
         filter.filter(constraint);
     }
 
