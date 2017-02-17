@@ -18,7 +18,7 @@ import org.json.JSONObject;
 
 public class CheckUpdates extends ParallelTask<Void, Void, Void> {
 
-    private static final String UPDATE_JSON = "https://raw.githubusercontent.com/topjohnwu/MagiskManager/updates/magisk_update.json";
+    private static final String UPDATE_JSON = "https://raw.githubusercontent.com/DeicPro/MagiskManager/updates/magisk_update.json";
     private static final int NOTIFICATION_ID = 1;
 
     private boolean showNotification = false;
