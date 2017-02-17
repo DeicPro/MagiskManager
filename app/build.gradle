@@ -9,7 +9,7 @@ android {
         minSdkVersion 21
         targetSdkVersion 25
         versionCode 22
-        versionName "4.1"
+        versionName "5-SNAPSHOT-f615ed40cdb6c23c2371598616dc48e2d984ca6b"
         jackOptions {
             enabled true
             jackInProcess true
